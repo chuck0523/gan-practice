@@ -19,18 +19,18 @@ from IPython.display import HTML
 
 if __name__ == "__main__":
 
-    # 再現性のためにランダムシードを設定する
+    # for 再現性
     manualSeed = 999
     #manualSeed = random.randint（1、10000）＃新しい結果が必要な場合に使用
     print("Random Seed: ", manualSeed)
     random.seed(manualSeed)
     torch.manual_seed(manualSeed)
 
-    # データセットのルートディレクトリ
+    # root dir for dataset
     dataroot = "./data/celeba"
 
     # データローダーのワーカー数
-    workers = 2
+    workers = 3
 
     # トレーニングのバッチサイズ
     batch_size = 128
@@ -52,7 +52,7 @@ if __name__ == "__main__":
     ndf = 64
 
     # エポック数
-    num_epochs = 5
+    num_epochs = 7
 
     # 学習率
     lr = 0.0002
@@ -81,13 +81,14 @@ if __name__ == "__main__":
     # Decide which device we want to run on
     device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
 
-    # トレーニング画像をプロットする（RuntimeError のためコメントアウト）
-    real_batch = next(iter(dataloader))
-    plt.figure(figsize=(8,8))
-    plt.axis("off")
-    plt.title("Training Images")
-    plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
-    # plt.show()
+    print(device)
+
+    # トレーニング画像をプロットする
+    # real_batch = next(iter(dataloader))
+    # plt.figure(figsize=(8,8))
+    # plt.axis("off")
+    # plt.title("Training Images")
+    # plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=2, normalize=True).cpu(),(1,2,0)))
 
     # G（生成器）とD（識別器）の重みの初期化
     def weights_init(m):
@@ -127,7 +128,7 @@ if __name__ == "__main__":
             )
 
         def forward(self, input):
-            return self.main(input)
+            return nn.parallel.data_parallel(self.main, input, range(self.ngpu))
 
     # Create the generator
     netG = Generator(ngpu).to(device)
@@ -169,7 +170,7 @@ if __name__ == "__main__":
             )
 
         def forward(self, input):
-            return self.main(input)
+            return nn.parallel.data_parallel(self.main, input, range(self.ngpu))
 
     # Create the Discriminator
     # 識別器を作成します
@@ -186,7 +187,6 @@ if __name__ == "__main__":
     netD.apply(weights_init)
 
     # Print the model
-    # モデルを出力します
     # print(netD)
 
     # BCELoss関数を初期化します
@@ -264,11 +264,10 @@ if __name__ == "__main__":
             # Gを更新します
             optimizerG.step()
 
-            # トレーニング統計を出力します
-            if i % 50 == 0:
-                print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
-                    % (epoch, num_epochs, i, len(dataloader),
-                        errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+            print('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+              % (epoch, num_epochs, i, len(dataloader),
+                 errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
+
 
             # 後でプロットするために損失を保存します
             G_losses.append(errG.item())
@@ -281,3 +280,38 @@ if __name__ == "__main__":
                 img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
 
             iters += 1
+
+    # plt.figure(figsize=(10,5))
+    # plt.title("Generator and Discriminator Loss During Training")
+    # plt.plot(G_losses,label="G")
+    # plt.plot(D_losses,label="D")
+    # plt.xlabel("iterations")
+    # plt.ylabel("Loss")
+    # plt.legend()
+    # plt.show()
+
+    #%%capture
+    fig = plt.figure(figsize=(8,8))
+    plt.axis("off")
+    ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
+    ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
+
+    HTML(ani.to_jshtml())
+
+    # データローダから実際の画像のバッチを取得します
+    real_batch = next(iter(dataloader))
+
+    # 実際の画像をプロットします
+    plt.figure(figsize=(15,15))
+    plt.subplot(1,2,1)
+    plt.axis("off")
+    plt.title("Real Images")
+    plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(),(1,2,0)))
+
+
+    # 最後のエポックからの偽の画像をプロットします
+    plt.subplot(1,2,2)
+    plt.axis("off")
+    plt.title("Fake Images")
+    plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+    plt.show()
